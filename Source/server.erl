@@ -70,6 +70,29 @@ pSocket(Socket, N) ->
 	end,
 	ok.
 	
+fst({A,_}) -> A.    
+snd({_,B}) -> B.    
+    
+lowerBound(X, [H|T]) ->
+    Hash = fst(H),
+    if
+        X =< Hash -> snd(H);
+        true      -> lowerBound(X, T)
+    end.
+    
+hashName(Name) ->   
+    Nodes_list = [ node() | nodes() ],
+    Nodes_hashes = lists:map(fun (X) -> {crypto:hash(md5,atom_to_list(X)), X} end, Nodes_list), 
+    Ring = lists:sort(Nodes_hashes),
+    Name_hash = crypto:hash(md5,Name),
+    Last_hash = fst(lists:last(Ring)),
+    io:format("~p ~p~n", [Name_hash, Ring]),
+    if
+        Last_hash < Name_hash -> snd(hd(Ring));
+        true                  -> lowerBound(Name_hash, Ring)
+    end.
+    
+    
 funy() ->
 	{A, B} = statistics(reductions),
 	io:format("~p~n", [B]),

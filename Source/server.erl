@@ -39,20 +39,19 @@ dispatcher(ListenSocket, N) ->
 	dispatcher(ListenSocket, N+1).
 	
 	
-pBalance(NodesState) ->
-    io:format("~p~n", [NodesState]),
+pBalance(NodesStates) ->
+    %io:format("~p~n", [NodesState]),
 	receive
 		{getMin, Pid} ->
-			Pid ! getMinState(NodesState),
-			pBalance(NodesState);
+			Pid ! getMinState(NodesStates), pBalance(NodesStates);
 		{notify, Node, Load} ->
-			pBalance(updateStates(NodesState, Node, Load))
+			pBalance(updateStates(NodesStates, Node, Load))
 	end.
 
 
 pStat() ->
 	{_,Load} = statistics(reductions),
-	lists:foreach(fun(Node) -> {balance, Node} ! {notify, node(), Load} end, [node()|nodes()]),
+	lists:foreach(fun(Node) -> {balance, Node} ! {notify, node(), Load} end, allNodes()),
 	wait(1),
 	pStat().
 	
@@ -80,19 +79,84 @@ lowerBound(X, [H|T]) ->
         true      -> lowerBound(X, T)
     end.
     
-hashName(Name) ->   
-    Nodes_list = [ node() | nodes() ],
-    Nodes_hashes = lists:map(fun (X) -> {crypto:hash(md5,atom_to_list(X)), X} end, Nodes_list), 
+-define(HASH, md5).
+
+hash(X) ->
+    if is_list(X) -> crypto:hash(?HASH,X);
+       is_atom(X) -> crypto:hash(?HASH,atom_to_list(X));
+       true       -> crypto:hash(?HASH,pid_to_list(X))
+    end.
+
+getNode(Name) ->
+    Nodes_list = allNodes(),
+    Nodes_hashes = lists:map(fun (X) -> {hash(X), X} end, Nodes_list), 
     Ring = lists:sort(Nodes_hashes),
-    Name_hash = crypto:hash(md5,Name),
+    Name_hash = hash(Name),
     Last_hash = fst(lists:last(Ring)),
-    io:format("~p ~p~n", [Name_hash, Ring]),
+    %io:format("~p ~p~n", [Name_hash, Ring]),
     if
         Last_hash < Name_hash -> snd(hd(Ring));
         true                  -> lowerBound(Name_hash, Ring)
     end.
     
-    
+
+pSession(RegisteredUsers) ->   
+    receive
+        {login, Username, Pid} ->
+            case lists:member(Username, RegisteredUsers) of
+                true  -> Pid ! error;                
+                false -> Pid ! ok, pSession([Username | RegisteredUsers])            
+            end;
+        {logout, Username, Pid} ->
+            Pid ! ok, pSession(lists:delete(Username, RegisteredUsers)) 
+    end.
+
+taTeTi() -> taTeTi().
+taTeTi(Board, Subscribers, Turn, Sym) ->
+    receive
+        _ -> ok
+    end.
+
+allNodes() -> [node() | nodes()].
+
+getAllGames(Games) ->
+    AllGames = Games ++ lists:map(
+        fun(Node)-> 
+            {gameManager, Node} ! {retrieve, local, self()},
+            receive X->X end end,
+        nodes()
+    ).
+
+pGameManager(Games) ->
+    receive
+        {create, Pid} ->
+            io:format("~p quiere crear un game~n", [Pid]),
+            balance ! {getMin, self()},
+            receive Node -> ok end,
+            GamePid = spawn(Node, ?MODULE, taTeTi, []),
+            NewGame = {hash(GamePid), GamePid},
+            Pid ! NewGame,
+            pGameManager([NewGame | Games]);
+        {retrieve, local, Pid} ->
+            Pid ! Games,
+            pGameManager(Games);
+        {retrieve, all, Pid} ->
+            AllGames = getAllGames(Games),
+            Pid ! AllGames,
+            pGameManager(Games);
+        {Action, GameHash, Pid} ->
+            if (Action == join) or (Action == subscribe) ->
+                    AllGames = getAllGames(Games),
+                    case proplists:get_value(GameHash, AllGames) of
+                        undefined -> Pid ! error;
+                        GamePid -> GamePid ! {Action, Pid}
+                    end;
+               true -> Pid ! error
+            end,
+            pGameManager(Games)
+    end.
+
+
 funy() ->
 	{A, B} = statistics(reductions),
 	io:format("~p~n", [B]),
@@ -100,4 +164,5 @@ funy() ->
 
 funny() -> 
     register(balance, spawn(?MODULE, pBalance, [orddict:new()])),
+    register(gameManager, spawn(server_backup, pGameManager, [[]])),
     spawn(?MODULE, pStat, []).

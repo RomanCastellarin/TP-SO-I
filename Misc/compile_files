@@ -1,0 +1,23 @@
+#!/usr/bin/env escript
+
+%% -*- erlang -*-
+%%! -smp enable -sname compile_files -mnesia debug verbose
+
+main(Filenames) ->
+    try
+        c(Filenames),
+        io:format("Compiled!\n")
+    catch
+        _:_ ->
+            usage()
+    end;
+
+main(_) ->
+    usage().
+
+usage() ->
+    io:format("usage: compile_files filename1 [filename2 [...]] \n"),
+    halt(1).
+
+c(A) when is_atom(A) ->  c:c(A);
+c(L) when is_list(L) ->  [c:c(I) || I <- L].

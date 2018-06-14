@@ -101,19 +101,24 @@ getNode(Name) ->
     
 
 pSession(RegisteredUsers) ->   
+    io:format("~p registered users~n", [RegisteredUsers]),
     receive
         {login, Username, Pid} ->
             case lists:member(Username, RegisteredUsers) of
-                true  -> Pid ! error;                
+                true  -> Pid ! error, pSession(RegisteredUsers);                
                 false -> Pid ! ok, pSession([Username | RegisteredUsers])            
             end;
         {logout, Username, Pid} ->
             Pid ! ok, pSession(lists:delete(Username, RegisteredUsers)) 
     end.
 
+% taTeTi() -> taTeTi("........." (Tablero), [Pid] (Suscriptores), Pid (Turno), Char (Simbolo de jugada) )
 taTeTi() -> taTeTi().
 taTeTi(Board, Subscribers, Turn, Sym) ->
     receive
+        {play, Jugada, Pid} -> ok;
+        {subscribe, Pid} -> ok;
+        {join, Pid} -> ok;
         _ -> ok
     end.
 
@@ -164,5 +169,6 @@ funy() ->
 
 funny() -> 
     register(balance, spawn(?MODULE, pBalance, [orddict:new()])),
-    register(gameManager, spawn(server_backup, pGameManager, [[]])),
+    register(gameManager, spawn(?MODULE, pGameManager, [[]])),
+    register(session, spawn(?MODULE, pSession, [[]])),
     spawn(?MODULE, pStat, []).

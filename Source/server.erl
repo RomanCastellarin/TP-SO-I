@@ -26,8 +26,7 @@ server(Port) ->
 	case gen_tcp:listen(Port, [{active, false}]) of 
 		{ok, ListenSocket} ->
 			spawn(?MODULE, dispatcher, [ListenSocket, 0]),
-			% all the other processes			
-			ok;
+			receive X -> X end;
 		{error, ErrorMessage} ->
 			io:format("No se pudo crear la conexión, ~p.~n", [ErrorMessage]),
 			error
@@ -54,20 +53,63 @@ pStat() ->
 	lists:foreach(fun(Node) -> {balance, Node} ! {notify, node(), Load} end, allNodes()),
 	wait(1),
 	pStat().
-	
+
+getMinState() ->
+ balance ! {getMin, self()}, receive Node -> Node end.
+
+pHandler(Socket, Name) ->
+  case gen_tcp:recv(Socket, 0) of
+    {ok, Message} ->
+      case string:tokens(Message, " \r\n") of
+        % List available games
+        ["LSG"] -> 
+          Node = getMinState(),
+          {gameManager, Node} ! {retrieve, all, self()}, receive GamesList -> ok end,
+          Msg = io:format("List: ~p~n", [GamesList]),
+          gen_tcp:send(Socket, Msg ),
+          pHandler(Socket, Name);
+          
+        % Create new game
+        ["NEW"] -> 
+          gameManager ! {create, self()}, receive {GameHash, GamePid} -> ok end,
+          gen_tcp:send(Socket, io:format("Game: ~p~n", [GameHash]) )
+        
+        %~ % Enter game
+        %~ ["ACC", GameHash] ->
+        %~ 
+        %~ % Make a movement
+        %~ ["PLA" | Name] -> 
+           %~ ???
+        %~ % Subscribe to game
+        %~ ["OBS", Name] -> 
+        %~ 
+        %~ % Unsubscribe from a game
+        %~ ["LEA", Name] -> 
+        %~ 
+        %~ % Disconnect
+        %~ ["BYE", Name] -> 
+      end;
+    {error, ErrorMessage} ->
+      %% VER QUÉ HACER
+      io:format("Client ~p could not connect.~n", [Name, ErrorMessage]), error
+  end.
 
 pSocket(Socket, N) -> 
 	case gen_tcp:recv(Socket, 0) of
 		{ok, Message} ->
 			case string:tokens(Message, " \r\n") of
-				["CON", Name] -> io:format("Client[~p] se llama ~p~n", [N, Name]);
-				X -> io:format("Client[~p] dice ~p~n", [N, X])
-			end,
-			pSocket(Socket, N);
+				["CON", Name] -> 
+          Node = getNode(Name),
+          {session, Node} ! {login, Name, self()},
+          receive 
+            ok -> io:format("Client[~p] (~p) has logged in.~n", [N, Name]), pHandler(Socket, Name);
+            error -> gen_tcp:send(Socket, "El nombre de usuario ya está registrado.~n"), error
+          end;
+				X -> gen_tcp:send(Socket, "Uso: 'CON username'.~n"), error
+			end;
 		{error, ErrorMessage } -> 
-			io:format("Client[~p] ha muerto porque ~p~n", [N, ErrorMessage])
-	end,
-	ok.
+			io:format("Client[~p] could not connect.~n", [N, ErrorMessage]), error
+	end.
 	
 fst({A,_}) -> A.    
 snd({_,B}) -> B.    
@@ -132,14 +174,28 @@ getAllGames(Games) ->
         nodes()
     ).
 
+pGameRegistry(RegisteredGames) ->
+  receive
+    {store, GameTuple} ->
+      pGameRegistry([GameTuple | RegisteredGames]);
+    {getPid, GameHash, Pid} ->
+      case proplists:get_value(GameHash, RegisteredGames) of
+          undefined -> Pid ! error;
+          GamePid -> Pid ! {ok, GamePid}
+      end,
+      pGameRegistry(RegisteredGames)
+  end.
+
+
 pGameManager(Games) ->
     receive
         {create, Pid} ->
             io:format("~p quiere crear un game~n", [Pid]),
-            balance ! {getMin, self()},
-            receive Node -> ok end,
+            Node = getMinState(),
             GamePid = spawn(Node, ?MODULE, taTeTi, []),
             NewGame = {hash(GamePid), GamePid},
+            NodeRegistry = getNode(fst(NewGame)),
+            {gameRegistry, NodeRegistry} ! {store, NewGame},
             Pid ! NewGame,
             pGameManager([NewGame | Games]);
         {retrieve, local, Pid} ->
@@ -151,24 +207,26 @@ pGameManager(Games) ->
             pGameManager(Games);
         {Action, GameHash, Pid} ->
             if (Action == join) or (Action == subscribe) ->
-                    AllGames = getAllGames(Games),
-                    case proplists:get_value(GameHash, AllGames) of
-                        undefined -> Pid ! error;
-                        GamePid -> GamePid ! {Action, Pid}
-                    end;
-               true -> Pid ! error
+                NodeRegistry = getNode(GameHash),
+                {gameRegistry, NodeRegistry} ! {getPid, GameHash, self()},
+                receive GamePid -> ok end,
+                GamePid ! {Action, Pid}
             end,
             pGameManager(Games)
     end.
 
-
-funy() ->
-	{A, B} = statistics(reductions),
-	io:format("~p~n", [B]),
-	funy().
-
-funny() -> 
+startup(Port) -> 
     register(balance, spawn(?MODULE, pBalance, [orddict:new()])),
     register(gameManager, spawn(?MODULE, pGameManager, [[]])),
     register(session, spawn(?MODULE, pSession, [[]])),
-    spawn(?MODULE, pStat, []).
+    register(gameRegistry, spawn(?MODULE, pGameRegistry, [[]])),
+    spawn(?MODULE, pStat, []),
+    server(Port).
+
+startup(Port, Node) -> 
+    register(balance, spawn(?MODULE, pBalance, [orddict:new()])),
+    register(gameManager, spawn(?MODULE, pGameManager, [[]])),
+    register(session, spawn(?MODULE, pSession, [[]])),
+    register(gameRegistry, spawn(?MODULE, pGameRegistry, [[]])),
+    spawn(?MODULE, pStat, []),
+    server(Port, Node).

@@ -11,8 +11,9 @@ PIDS=()
 
 for i in $(seq 0 "$(($N_SERVERS-1))"); # for(i=0; i<N_SERVERS; i++)
 do
+#    echo "erl -name serverk$i@$LOCAL_IP -setcookie $COOKIE -noshell -eval \"server:startup($(($PORT+$i+1)),'$SERVER_TO_CONNECT').\""
 	# Run the erlang node in the background
-	erl -name server$i@$LOCAL_IP -setcookie $COOKIE -noshell -eval "server:server($(($PORT+$i+1)),'$SERVER_TO_CONNECT')." &
+	erl -name serverk$i@$LOCAL_IP -setcookie $COOKIE -noshell -eval "server:startup($(($PORT+$i+1)),'$SERVER_TO_CONNECT')." &
 	# Save node PID
 	PIDS[$i]=$!
 done
@@ -21,6 +22,6 @@ done
 echo "${PIDS[*]}"
 
 # Kill the generated nodes (for testing)
-for pid in "${PIDS[*]}"; do
-	kill $pid
-	done
+# for pid in "${PIDS[*]}"; do
+# 	kill $pid
+#	done

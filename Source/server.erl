@@ -65,15 +65,15 @@ pHandler(Socket, Name) ->
         ["LSG"] -> 
           Node = getMinState(),
           {gameManager, Node} ! {retrieve, all, self()}, receive GamesList -> ok end,
-          Msg = io:format("List: ~p~n", [GamesList]),
-          gen_tcp:send(Socket, Msg ),
+          gen_tcp:send(Socket, io_lib:format("List: ~p~n", [GamesList])),
+          io:format("List: ~p~n", [GamesList]),
           pHandler(Socket, Name);
           
         % Create new game
         ["NEW"] -> 
           gameManager ! {create, self()}, receive {GameHash, GamePid} -> ok end,
-          gen_tcp:send(Socket, io:format("Game: ~p~n", [GameHash]) )
-        
+          gen_tcp:send(Socket, io_lib:format("GameID: ~p~n", [GameHash])),
+          pHandler(Socket, Name)
         %~ % Enter game
         %~ ["ACC", GameHash] ->
         %~ 
@@ -124,9 +124,10 @@ lowerBound(X, [H|T]) ->
 -define(HASH, md5).
 
 hash(X) ->
-    if is_list(X) -> crypto:hash(?HASH,X);
-       is_atom(X) -> crypto:hash(?HASH,atom_to_list(X));
-       true       -> crypto:hash(?HASH,pid_to_list(X))
+    io:format("HASHEAR: ~p~n", [X]),
+    if is_atom(X) -> crypto:hash(?HASH,atom_to_list(X));
+       is_pid(X)  -> crypto:hash(?HASH,pid_to_list(X));
+       true       -> crypto:hash(?HASH,X)
     end.
 
 getNode(Name) ->
@@ -155,7 +156,7 @@ pSession(RegisteredUsers) ->
     end.
 
 % taTeTi() -> taTeTi("........." (Tablero), [Pid] (Suscriptores), Pid (Turno), Char (Simbolo de jugada) )
-taTeTi() -> taTeTi().
+taTeTi() -> taTeTi(".........", [], false, "x").
 taTeTi(Board, Subscribers, Turn, Sym) ->
     receive
         {play, Jugada, Pid} -> ok;

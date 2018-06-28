@@ -8,7 +8,7 @@ wait(X) -> receive after (1000*X) -> ok end.
 getMinState(D) ->
 	Comp = fun (Node, Load, {OldNode, OldLoad}) ->
 		if Load < OldLoad -> {Node, Load};
-		   true			  -> {OldNode, OldLoad} end end,
+		   true			      -> {OldNode, OldLoad} end end,
 	{Node,_} = orddict:fold(Comp, {none, 1.0e10}, D),
     Node.
 
@@ -57,6 +57,13 @@ pStat() ->
 getMinState() ->
  balance ! {getMin, self()}, receive Node -> Node end.
 
+%%pReplier(Socket, Name) ->
+%%  receive 
+%%    die -> ok;
+%%    {format, S, A} -> gen_tcp:send(Socket, io_lib:format(S, A)), pReplier(Socket, Name);
+%%    S -> gen_tcp:send(Socket, S), pReplier(Socket, Name)
+%%  end.
+
 pHandler(Socket, Name) ->
   case gen_tcp:recv(Socket, 0) of
     {ok, Message} ->
@@ -65,33 +72,63 @@ pHandler(Socket, Name) ->
         ["LSG"] -> 
           Node = getMinState(),
           {gameManager, Node} ! {retrieve, all, self()}, receive GamesList -> ok end,
-          gen_tcp:send(Socket, io_lib:format("List: ~p~n", [GamesList])),
-          io:format("List: ~p~n", [GamesList]),
+          HashesList = lists:map(fun fst/1, GamesList),
+          gen_tcp:send(Socket, io_lib:format("List: ~p~n", [HashesList])),
+          io:format("List: ~p~n", [HashesList]),
           pHandler(Socket, Name);
           
         % Create new game
         ["NEW"] -> 
-          gameManager ! {create, self()}, receive {GameHash, GamePid} -> ok end,
+          gameManager ! {create, self()}, receive {GameHash, _} -> ok end,
           gen_tcp:send(Socket, io_lib:format("GameID: ~p~n", [GameHash])),
-          pHandler(Socket, Name)
-        %~ % Enter game
-        %~ ["ACC", GameHash] ->
-        %~ 
-        %~ % Make a movement
-        %~ ["PLA" | Name] -> 
-           %~ ???
-        %~ % Subscribe to game
-        %~ ["OBS", Name] -> 
-        %~ 
-        %~ % Unsubscribe from a game
-        %~ ["LEA", Name] -> 
-        %~ 
-        %~ % Disconnect
-        %~ ["BYE", Name] -> 
+          pHandler(Socket, Name);
+        % Enter game
+        ["ACC", HashString] ->
+          GameHash = list_to_binary(HashString),
+          io:format("gameHash: ~p~n", [GameHash]),
+          gameRegistry ! {getPid, GameHash, self()},
+          receive
+            undefined -> io:format("ono~n", []);
+            X -> io:format("osi ~p~n", [X])
+          end,
+          gameManager ! {join, GameHash, self()},
+          receive
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido aceptado.~n"));
+            error -> error %% TODO: handle this
+          end,
+          pHandler(Socket, Name);
+        % Make a movement
+        ["PLA", HashString | Move ] -> 
+          GameHash = list_to_binary(HashString)
+          ;
+        % Subscribe to game
+        ["OBS", HashString] ->
+          GameHash = list_to_binary(HashString),
+          gameManager ! {subscribe, GameHash, Socket, self()},
+          receive
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido subscripto.~n"));
+            error -> error %% TODO: handle this
+          end,
+          pHandler(Socket, Name);
+        % Unsubscribe from a game
+        ["LEA", HashString] ->
+          GameHash = list_to_binary(HashString), 
+          gameManager ! {unsubscribe, GameHash, Socket, self()},
+          receive
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido desubscripto.~n"));
+            error -> error %% TODO: handle this too
+          end,
+          pHandler(Socket, Name);
+        % Disconnect
+        ["BYE", Name] -> 
+          gen_tcp:send(Socket, io_lib:format("Chau.~n")),
+          ok;
+        % Catch-all
+        _ -> pHandler(Socket, Name)
       end;
     {error, ErrorMessage} ->
       %% VER QUÉ HACER
-      io:format("Client ~p could not connect.~n", [Name, ErrorMessage]), error
+      io:format("Client ~p could not connect: ~p.~n", [Name, ErrorMessage]), error
   end.
 
 pSocket(Socket, N) -> 
@@ -105,14 +142,14 @@ pSocket(Socket, N) ->
             ok -> io:format("Client[~p] (~p) has logged in.~n", [N, Name]), pHandler(Socket, Name);
             error -> gen_tcp:send(Socket, "El nombre de usuario ya está registrado.~n"), error
           end;
-				X -> gen_tcp:send(Socket, "Uso: 'CON username'.~n"), error
+				_ -> gen_tcp:send(Socket, "Uso: 'CON username'.~n"), error
 			end;
 		{error, ErrorMessage } -> 
-			io:format("Client[~p] could not connect.~n", [N, ErrorMessage]), error
+			io:format("Client[~p] could not connect: ~p.~n", [N, ErrorMessage]), error
 	end.
 	
-fst({A,_}) -> A.    
-snd({_,B}) -> B.    
+fst(X) -> element(1, X).    
+snd(X) -> element(2, X).    
     
 lowerBound(X, [H|T]) ->
     Hash = fst(H),
@@ -123,12 +160,13 @@ lowerBound(X, [H|T]) ->
     
 -define(HASH, md5).
 
+
 hash(X) ->
-    io:format("HASHEAR: ~p~n", [X]),
-    if is_atom(X) -> crypto:hash(?HASH,atom_to_list(X));
-       is_pid(X)  -> crypto:hash(?HASH,pid_to_list(X));
-       true       -> crypto:hash(?HASH,X)
-    end.
+    if is_atom(X) -> Y = atom_to_list(X);
+       is_pid(X)  -> Y = pid_to_list(X);
+       true       -> Y = X
+    end,
+    base64:encode(crypto:hash(?HASH, Y)).
 
 getNode(Name) ->
     Nodes_list = allNodes(),
@@ -194,7 +232,7 @@ pGameManager(Games) ->
             io:format("~p quiere crear un game~n", [Pid]),
             Node = getMinState(),
             GamePid = spawn(Node, ?MODULE, taTeTi, []),
-            NewGame = {hash(GamePid), GamePid},
+            NewGame = {binary:bin_to_list(hash(GamePid)), GamePid},
             NodeRegistry = getNode(fst(NewGame)),
             {gameRegistry, NodeRegistry} ! {store, NewGame},
             Pid ! NewGame,
@@ -206,12 +244,19 @@ pGameManager(Games) ->
             AllGames = getAllGames(Games),
             Pid ! AllGames,
             pGameManager(Games);
-        {Action, GameHash, Pid} ->
-            if (Action == join) or (Action == subscribe) ->
+        {join, GameHash, Pid} ->
+            NodeRegistry = getNode(GameHash),
+            {gameRegistry, NodeRegistry} ! {getPid, GameHash, self()},
+            receive GamePid -> ok end, %% TODO: PUEDE QUE TE DEN UN HASH INVALIDO
+            GamePid ! {join, Pid},
+            Pid ! ok;
+        {Action, GameHash, Socket, Pid} ->
+            if  (Action == subscribe) or (Action == unsubscribe) ->
                 NodeRegistry = getNode(GameHash),
                 {gameRegistry, NodeRegistry} ! {getPid, GameHash, self()},
-                receive GamePid -> ok end,
-                GamePid ! {Action, Pid}
+                receive GamePid -> ok end, %% TODO: PUEDE QUE TE DEN UN HASH INVALIDO
+                GamePid ! {Action, Socket},
+                Pid ! ok
             end,
             pGameManager(Games)
     end.

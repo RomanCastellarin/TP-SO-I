@@ -88,12 +88,12 @@ pHandler(Socket, Name) ->
           io:format("gameHash: ~p~n", [GameHash]),
           gameRegistry ! {getPid, GameHash, self()},
           receive
-            undefined -> io:format("ono~n", []);
-            X -> io:format("osi ~p~n", [X])
+            error -> io:format("ono~n", []);
+            {ok, X} -> io:format("osi ~p~n", [X])
           end,
           gameManager ! {join, GameHash, self()},
           receive
-            ok -> gen_tcp:send(Socket, io_lib:format("Has sido aceptado.~n"));
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido aceptado.~n", []));
             error -> error %% TODO: handle this
           end,
           pHandler(Socket, Name);
@@ -106,7 +106,7 @@ pHandler(Socket, Name) ->
           GameHash = list_to_binary(HashString),
           gameManager ! {subscribe, GameHash, Socket, self()},
           receive
-            ok -> gen_tcp:send(Socket, io_lib:format("Has sido subscripto.~n"));
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido subscripto.~n", []));
             error -> error %% TODO: handle this
           end,
           pHandler(Socket, Name);
@@ -115,7 +115,7 @@ pHandler(Socket, Name) ->
           GameHash = list_to_binary(HashString), 
           gameManager ! {unsubscribe, GameHash, Socket, self()},
           receive
-            ok -> gen_tcp:send(Socket, io_lib:format("Has sido desubscripto.~n"));
+            ok -> gen_tcp:send(Socket, io_lib:format("Has sido desubscripto.~n", []));
             error -> error %% TODO: handle this too
           end,
           pHandler(Socket, Name);
@@ -232,7 +232,7 @@ pGameManager(Games) ->
             io:format("~p quiere crear un game~n", [Pid]),
             Node = getMinState(),
             GamePid = spawn(Node, ?MODULE, taTeTi, []),
-            NewGame = {binary:bin_to_list(hash(GamePid)), GamePid},
+            NewGame = {hash(GamePid), GamePid},
             NodeRegistry = getNode(fst(NewGame)),
             {gameRegistry, NodeRegistry} ! {store, NewGame},
             Pid ! NewGame,
@@ -247,7 +247,7 @@ pGameManager(Games) ->
         {join, GameHash, Pid} ->
             NodeRegistry = getNode(GameHash),
             {gameRegistry, NodeRegistry} ! {getPid, GameHash, self()},
-            receive GamePid -> ok end, %% TODO: PUEDE QUE TE DEN UN HASH INVALIDO
+            receive {ok, GamePid} -> ok end, %% TODO: PUEDE QUE TE DEN UN HASH INVALIDO
             GamePid ! {join, Pid},
             Pid ! ok;
         {Action, GameHash, Socket, Pid} ->

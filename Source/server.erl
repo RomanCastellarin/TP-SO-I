@@ -73,6 +73,7 @@ pHandler(Socket, Name, Replier) ->
         ["LSG"] -> 
           Node = getMinState(),
           {gameManager, Node} ! {retrieve, all, self()}, receive GamesList -> ok end,
+          io:format("~p~n", [GamesList]),
           HashesList = lists:map(fun fst/1, GamesList),
           Replier ! {format, "List: ~p~n", [HashesList]},
           io:format("List: ~p~n", [HashesList]),
@@ -206,25 +207,25 @@ pSession(RegisteredUsers) ->
     end.
 
 % taTeTi() -> taTeTi("........." (Tablero), [(Pid, Socket)] (Suscriptores), Bool (Turno), Char (Simbolo de jugada) )
-taTeTi() -> taTeTi(".........", [], false, "x").
-taTeTi(Board, Subscribers, Turn, Sym) ->
-    receive
-        {play, Jugada, Pid} -> ok;
-        {subscribe, Replier, Pid} -> ok;
-        {unsubscribe, Replier, Pid} -> ok;
-        {join, Replier, Pid} -> ok;
-        _ -> ok
-    end.
+%%taTeTi() -> taTeTi(".........", [], false, "x").
+%%taTeTi(Board, Subscribers, Turn, Sym) ->
+%%    receive
+%%        {play, Jugada, Pid} -> ok;
+%%        {subscribe, Replier, Pid} -> ok;
+%%        {unsubscribe, Replier, Pid} -> ok;
+%%        {join, Replier, Pid} -> ok;
+%%        _ -> ok
+%%	    end.
 
 allNodes() -> [node() | nodes()].
 
 getAllGames(Games) ->
-    AllGames = Games ++ lists:map(
+    Games ++ lists:append(lists:map(
         fun(Node)-> 
             {gameManager, Node} ! {retrieve, local, self()},
             receive X->X end end,
         nodes()
-    ).
+    )).
 
 pGameRegistry(RegisteredGames) ->
   receive
@@ -241,7 +242,7 @@ pGameRegistry(RegisteredGames) ->
 
 pGameManager(Games) ->
     receive
-        {create, Replier, Pid} ->
+        {create, _Replier, Pid} ->
             io:format("~p quiere crear un game~n", [Pid]),
             Node = getMinState(),
             GamePid = spawn(Node, nim, nim, []),
